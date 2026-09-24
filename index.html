@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Number Board</title>
+<script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
+<style>
+  /* ── Theme: change these to restyle the board ── */
+  :root{
+    --bg:          #10131a;
+    --panel:       #1a1f2b;
+    --border:      #2c3444;
+    --cell:        #f4f6fa;
+    --cell-text:   #10131a;
+    --called:      #232a38;
+    --called-text: #4a5468;
+    --accent:      #3fb5e8;
+    --text:        #eef2f8;
+    --muted:       #8793a8;
+    --font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  *, *::before, *::after{ box-sizing:border-box; margin:0; padding:0; }
+  html, body{ width:100%; height:100%; overflow:hidden; }
+  body{
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+  }
+
+  /* ── Waiting screen ── */
+  .waiting{
+    position:fixed; inset:0;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px;
+    text-align:center; padding:24px;
+  }
+  .waiting h1{ font-size:clamp(2rem,6vw,4.5rem); font-weight:800; letter-spacing:-0.02em; }
+  .waiting p{ font-size:clamp(0.9rem,1.6vw,1.2rem); color:var(--muted); }
+  .waiting .pulse{ animation: pulse 2.2s ease-in-out infinite; }
+  @keyframes pulse{ 0%,100%{opacity:0.4} 50%{opacity:1} }
+  .waiting .warn{ color:#ffb35c; max-width:520px; line-height:1.5; }
+  .keyform{ display:none; flex-direction:column; gap:10px; width:min(440px, 90vw); margin-top:10px; }
+  .keyform.show{ display:flex; }
+  .keyform label{ font-size:0.9rem; color:var(--muted); text-align:left; }
+  .keyform input{
+    width:100%; padding:12px 14px; border-radius:10px;
+    border:1px solid var(--border); background:var(--panel); color:var(--text);
+    font:inherit; font-size:1rem;
+  }
+  .keyform input:focus{ outline:2px solid var(--accent); outline-offset:1px; }
+  .keyform button{
+    padding:12px; border:none; border-radius:10px; cursor:pointer;
+    background:var(--accent); color:#0b1a24; font:inherit; font-weight:700; font-size:1rem;
+  }
+  .keyform .hint{ font-size:0.8rem; color:var(--muted); text-align:left; line-height:1.45; }
+
+  /* ── Board layout ── */
+  .root{
+    position:fixed; inset:0;
+    display:none;
+    grid-template-rows: auto 1fr auto;
+    gap: 1.2vh;
+    padding: 2vh 2vw;
+  }
+  .title{
+    text-align:center;
+    font-size:clamp(1.2rem,3vw,2.6rem);
+    font-weight:800;
+    letter-spacing:-0.01em;
+  }
+  .board-wrap{ min-height:0; display:flex; }
+  #dispBoard{
+    flex:1;
+    display:grid;
+    gap: 0.35vw;
+    align-content:stretch;
+  }
+  .dcell{
+    background: var(--cell);
+    color: var(--cell-text);
+    border-radius: 0.4vw;
+    display:flex; align-items:center; justify-content:center;
+    font-weight:700;
+    font-variant-numeric: tabular-nums;
+    font-size: clamp(0.55rem, 1.35vw, 1.6rem);
+    min-height:0;
+    transition: background 0.3s, color 0.3s;
+  }
+  .dcell.removed{
+    background: var(--called);
+    color: var(--called-text);
+  }
+  .dcell.removing{ animation: callOut 0.5s ease forwards; }
+  @keyframes callOut{
+    0%  { transform:scale(1); background:var(--accent); color:#fff; }
+    40% { transform:scale(1.25); background:var(--accent); color:#fff; }
+    100%{ transform:scale(1); background:var(--called); color:var(--called-text); }
+  }
+
+  /* ── Stats bar ── */
+  .stats{
+    display:flex; align-items:center; justify-content:center; flex-wrap:wrap;
+    gap: 1vh 2.5vw;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 1.2vh 2vw;
+  }
+  .stat{ text-align:center; }
+  .stat-n{
+    font-size:clamp(1.2rem,2.8vw,2.6rem);
+    font-weight:800;
+    font-variant-numeric: tabular-nums;
+    line-height:1;
+    transition: color 0.3s;
+  }
+  .stat-n.flash{ color: var(--accent); }
+  .stat-l{ font-size:clamp(0.6rem,0.9vw,0.85rem); color:var(--muted); margin-top:4px; }
+  .sdiv{ width:1px; align-self:stretch; background:var(--border); }
+  .last{ display:flex; align-items:center; gap:12px; }
+  .last-lbl{ font-size:clamp(0.65rem,1vw,0.95rem); color:var(--muted); }
+  .last-pill{
+    border: 2px solid var(--accent);
+    border-radius:999px;
+    padding: 6px 22px;
+    font-size:clamp(1rem,2vw,1.9rem);
+    font-weight:800;
+    font-variant-numeric: tabular-nums;
+    white-space:nowrap;
+  }
+
+  /* ── Winner overlay ── */
+  #winner{
+    position:fixed; inset:0; z-index:500;
+    display:none;
+    background: rgba(8,10,16,0.82);
+  }
+  #winner.active{ display:block; }
+  #confetti{ position:absolute; inset:0; width:100%; height:100%; }
+  .winner-msg{
+    position:absolute; inset:0;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    text-align:center;
+    animation: pop 0.7s cubic-bezier(0.34,1.56,0.64,1) both;
+  }
+  @keyframes pop{ from{ transform:scale(0.6); opacity:0 } to{ transform:scale(1); opacity:1 } }
+  .w-title{ font-size:clamp(2.5rem,9vw,8rem); font-weight:900; letter-spacing:-0.03em; }
+  .w-sub{ font-size:clamp(0.9rem,2vw,1.6rem); color:var(--muted); margin-top:1vh; }
+  .w-num{
+    margin-top:2vh;
+    font-size:clamp(5rem,22vw,20rem);
+    font-weight:900;
+    line-height:1;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── Connection light ── */
+  .dot{
+    position:fixed; top:14px; right:16px; z-index:600;
+    width:9px; height:9px; border-radius:50%;
+    background:#6b7280;
+    transition: background 0.3s;
+  }
+  .dot.live{ background:#34d399; box-shadow:0 0 8px rgba(52,211,153,0.7); }
+
+  @media (prefers-reduced-motion: reduce){
+    .dcell.removing, .winner-msg, .waiting .pulse{ animation:none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="dot" id="connDot" title="Connection status"></div>
+
+<div class="waiting" id="waitScreen">
+  <h1 id="waitTitle">Number Board</h1>
+  <p class="pulse" id="waitMsg">Waiting for the control panel…</p>
+  <form class="keyform" id="keyForm" autocomplete="off">
+    <label for="keyInput">Ably subscribe-only key</label>
+    <input id="keyInput" type="password" placeholder="appId.keyId:secret" spellcheck="false">
+    <button type="submit">Connect</button>
+    <div class="hint">The key is saved in this browser only. To change it later, open this page with <b>?forget</b> at the end of the address.</div>
+  </form>
+</div>
+
+<div class="root" id="displayRoot">
+  <div class="title" id="boardTitle"></div>
+  <div class="board-wrap"><div id="dispBoard"></div></div>
+  <div class="stats">
+    <div class="stat"><div class="stat-n" id="dStatActive">—</div><div class="stat-l">Remaining</div></div>
+    <div class="sdiv"></div>
+    <div class="stat"><div class="stat-n" id="dStatRemoved">—</div><div class="stat-l">Called</div></div>
+    <div class="sdiv"></div>
+    <div class="stat"><div class="stat-n" id="dStatTotal">—</div><div class="stat-l">Total</div></div>
+    <div class="sdiv"></div>
+    <div class="last">
+      <span class="last-lbl">Last called</span>
+      <div class="last-pill"><span id="lastNums">—</span></div>
+    </div>
+  </div>
+</div>
+
+<div id="winner">
+  <canvas id="confetti"></canvas>
+  <div class="winner-msg">
+    <div class="w-title">Winner!</div>
+    <div class="w-sub">Final number called</div>
+    <div class="w-num" id="winNumber">—</div>
+  </div>
+</div>
+
+<script>
+/* ── Settings ──────────────────────────────────────────────
+   Keys are NOT stored in this file. When the page opens it uses,
+   in order:  ?key=... in the address  →  a key saved in this
+   browser  →  a form asking for one.
+   Use a SUBSCRIBE-ONLY key for the display. See README.md.
+   Channel can be changed with ?channel=... in the address.
+──────────────────────────────────────────────────────────── */
+const KEY_STORE = 'numberboard-display-key';
+const params    = new URLSearchParams(location.search);
+const CHANNEL   = params.get('channel') || 'numberboard-v1';
+
+let currentRemoved = new Set();
+let currentTotal   = 0;
+let currentStart   = 1;
+let initialized    = false;
+let winnerActive   = false;
+let confettiRAF    = null;
+
+const dot = document.getElementById('connDot');
+
+function safeGet(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
+function safeSet(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
+function safeDel(k){ try { localStorage.removeItem(k); } catch(e){} }
+function looksLikeKey(k){ return /^[^.\s]+\.[^:\s]+:\S+$/.test(k || ''); }
+
+function connect(key) {
+  const msg = document.getElementById('waitMsg');
+  msg.className = 'pulse';
+  msg.textContent = 'Waiting for the control panel…';
+  document.getElementById('keyForm').classList.remove('show');
+
+  const ably = new Ably.Realtime({ key });
+  ably.connection.on('connected',    () => dot.className = 'dot live');
+  ably.connection.on('disconnected', () => dot.className = 'dot');
+  ably.connection.on('failed', () => {
+    dot.className = 'dot';
+    safeDel(KEY_STORE);
+    askForKey('That key didn\u2019t work. Check it and try again.');
+  });
+
+  // rewind:1 = a display opened late immediately gets the latest state
+  const ch = ably.channels.get(CHANNEL + ':state', { params: { rewind: '1' } });
+  ch.subscribe('state', m => applyState(m.data));
+}
+
+function askForKey(message) {
+  const msg = document.getElementById('waitMsg');
+  msg.className = 'warn';
+  msg.textContent = message || 'Enter your Ably key to connect this board.';
+  document.getElementById('keyForm').classList.add('show');
+  document.getElementById('keyInput').focus();
+}
+
+document.getElementById('keyForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const key = document.getElementById('keyInput').value.trim();
+  if (!looksLikeKey(key)) { askForKey('That doesn\u2019t look like an Ably key. It should look like appId.keyId:secret.'); return; }
+  safeSet(KEY_STORE, key);
+  connect(key);
+});
+
+(function start() {
+  if (params.has('forget')) safeDel(KEY_STORE);
+  const urlKey = params.get('key');
+  if (urlKey) safeSet(KEY_STORE, urlKey);
+  if (params.has('key') || params.has('forget')) {
+    // Hide the key from the address bar
+    params.delete('key'); params.delete('forget');
+    const q = params.toString();
+    history.replaceState(null, '', location.pathname + (q ? '?' + q : ''));
+  }
+  const key = urlKey || safeGet(KEY_STORE);
+  if (looksLikeKey(key)) connect(key); else askForKey();
+})();
+
+function applyState(state) {
+  const first = !initialized;
+  initialized = true;
+
+  document.getElementById('waitScreen').style.display  = 'none';
+  document.getElementById('displayRoot').style.display = 'grid';
+
+  const title = (state.title || '').trim();
+  document.getElementById('boardTitle').textContent = title;
+  document.getElementById('boardTitle').style.display = title ? '' : 'none';
+  document.title = title || 'Number Board';
+
+  const newRemoved   = new Set((state.removed || []).map(String));
+  const needsRebuild = state.total !== currentTotal || state.start !== currentStart;
+  const log          = state.lastCalledLog || [];
+
+  // Board was rebuilt or restored: clear the winner screen
+  if (needsRebuild || (log.length === 0 && winnerActive)) stopWinner();
+
+  if (needsRebuild || first) {
+    buildBoard(state.total, state.start, newRemoved, first);
+    currentTotal = state.total;
+    currentStart = state.start;
+  } else {
+    // Newly called numbers
+    [...newRemoved].filter(i => !currentRemoved.has(i)).forEach(idx => {
+      const c = document.querySelector('.dcell[data-idx="' + idx + '"]');
+      if (!c) return;
+      c.classList.add('removing');
+      c.addEventListener('animationend', () => {
+        c.classList.remove('removing');
+        c.classList.add('removed');
+      }, { once: true });
+    });
+    // Restored numbers
+    [...currentRemoved].filter(i => !newRemoved.has(i)).forEach(idx => {
+      const c = document.querySelector('.dcell[data-idx="' + idx + '"]');
+      if (c) c.classList.remove('removed', 'removing');
+    });
+  }
+  currentRemoved = newRemoved;
+
+  flash('dStatActive',  state.total - newRemoved.size);
+  flash('dStatRemoved', newRemoved.size);
+  flash('dStatTotal',   state.total);
+
+  // Most recent is the LAST entry; show the last 5, newest first
+  document.getElementById('lastNums').textContent =
+    log.length ? log.slice(-5).reverse().join('   ') : '—';
+
+  // Every number called: the final one is the winner
+  if (state.total > 0 && newRemoved.size >= state.total && !winnerActive) {
+    const winningNum = log.length ? log[log.length - 1] : '—';
+    setTimeout(() => showWinner(winningNum), 700);
+  }
+}
+
+function flash(id, val) {
+  const el = document.getElementById(id);
+  if (el.textContent !== String(val)) {
+    el.textContent = val;
+    el.classList.add('flash');
+    setTimeout(() => el.classList.remove('flash'), 700);
+  }
+}
+
+function buildBoard(total, start, removedSet, animate) {
+  const board = document.getElementById('dispBoard');
+  board.innerHTML = '';
+  if (!total) return;
+
+  // Pick columns so the grid fills the screen's shape
+  const wrap = board.parentElement.getBoundingClientRect();
+  const ratio = (wrap.width || window.innerWidth) / (wrap.height || window.innerHeight);
+  const cols = Math.max(1, Math.round(Math.sqrt(total * ratio)));
+  const rows = Math.ceil(total / cols);
+  board.style.gridTemplateColumns = 'repeat(' + cols + ', minmax(0,1fr))';
+  board.style.gridTemplateRows    = 'repeat(' + rows + ', minmax(0,1fr))';
+
+  for (let i = 0; i < total; i++) {
+    const cell = document.createElement('div');
+    const isRemoved = removedSet.has(String(i));
+    cell.className   = 'dcell' + (isRemoved ? ' removed' : '');
+    cell.dataset.idx = i;
+    cell.textContent = start + i;
+    if (animate && !isRemoved) {
+      cell.style.opacity   = '0';
+      cell.style.transform = 'scale(0.88)';
+      setTimeout(() => {
+        cell.style.transition = 'opacity 0.25s, transform 0.25s';
+        cell.style.opacity    = '';
+        cell.style.transform  = '';
+        setTimeout(() => cell.style.transition = '', 300);
+      }, i * 2);
+    }
+    board.appendChild(cell);
+  }
+}
+
+/* ── Winner confetti: runs until the board is reset ── */
+function showWinner(num) {
+  winnerActive = true;
+  document.getElementById('winNumber').textContent = num;
+  document.getElementById('winner').classList.add('active');
+
+  const canvas = document.getElementById('confetti');
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+  const ctx = canvas.getContext('2d');
+  const COLORS = ['#3fb5e8', '#34d399', '#fbbf24', '#f472b6', '#a78bfa', '#ffffff'];
+  const bits = Array.from({ length: 160 }, () => ({
+    x: Math.random() * canvas.width,
+    y: -Math.random() * canvas.height - 20,
+    w: 6 + Math.random() * 8,
+    h: 10 + Math.random() * 10,
+    vy: 2 + Math.random() * 4,
+    vx: (Math.random() - 0.5) * 2,
+    spin: (Math.random() - 0.5) * 0.2,
+    angle: Math.random() * Math.PI * 2,
+    color: COLORS[Math.floor(Math.random() * COLORS.length)]
+  }));
+
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+  function draw() {
+    if (!winnerActive) { ctx.clearRect(0, 0, canvas.width, canvas.height); return; }
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    bits.forEach(b => {
+      b.y += b.vy; b.x += b.vx; b.angle += b.spin;
+      if (b.y > canvas.height + 20) { b.y = -20; b.x = Math.random() * canvas.width; }
+      ctx.save();
+      ctx.translate(b.x, b.y);
+      ctx.rotate(b.angle);
+      ctx.scale(Math.abs(Math.cos(b.angle * 1.5)) + 0.2, 1);
+      ctx.fillStyle = b.color;
+      ctx.fillRect(-b.w / 2, -b.h / 2, b.w, b.h);
+      ctx.restore();
+    });
+    confettiRAF = requestAnimationFrame(draw);
+  }
+  confettiRAF = requestAnimationFrame(draw);
+}
+
+function stopWinner() {
+  winnerActive = false;
+  if (confettiRAF) { cancelAnimationFrame(confettiRAF); confettiRAF = null; }
+  document.getElementById('winner').classList.remove('active');
+  const canvas = document.getElementById('confetti');
+  canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+}
+
+window.addEventListener('resize', () => {
+  const c = document.getElementById('confetti');
+  c.width = window.innerWidth; c.height = window.innerHeight;
+  if (initialized && currentTotal) buildBoard(currentTotal, currentStart, currentRemoved, false);
+});
+</script>
+</body>
+</html>

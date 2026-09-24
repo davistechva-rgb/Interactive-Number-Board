@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <title>Control Panel</title>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+  <script src="https://cdn.ably.com/lib/ably.min-2.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      /* ── Theme: change these to restyle the control panel ── */
+      --bg: #10131a;
+      --panel: #1a1f2b;
+      --border: #2c3444;
+      --accent: #3fb5e8;
+      --accent2: #f87171;
+      --text: #eef2f8;
+      --muted: #8793a8;
+      --cell: #232a38;
+      --cell-hover: #2c3444;
+      --cell-selected: #1d3b4d;
+      --removed: #151a23;
+    }
+    html { height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'DM Mono', monospace;
+      min-height: 100%;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .topbar {
+      position: sticky; top: 0; z-index: 50;
+      background: rgba(16,19,26,0.95);
+      backdrop-filter: blur(6px);
+      border-bottom: 2px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 16px;
+    }
+    .topbar h1 { font-family:'Bebas Neue',sans-serif; font-size:1.6rem; letter-spacing:0.1em; color:var(--accent); line-height:1; }
+    .badge { font-size:0.6rem; letter-spacing:0.14em; text-transform:uppercase; background:var(--panel); border:1px solid var(--border); border-radius:999px; padding:5px 12px; color:var(--muted); white-space:nowrap; }
+    .badge.live { border-color:#34d399; color:#34d399; }
+    .badge.live::before { content:'● '; }
+    .badge.error { border-color:var(--accent2); color:var(--accent2); }
+    .tabs { display:flex; border-bottom:2px solid var(--border); background:rgba(16,19,26,0.95); position:sticky; top:57px; z-index:49; }
+    .tab { flex:1; padding:12px 8px; text-align:center; font-family:'Bebas Neue',sans-serif; font-size:0.9rem; letter-spacing:0.1em; color:var(--muted); cursor:pointer; border-bottom:3px solid transparent; transition:all 0.15s; user-select:none; }
+    .tab.active { color:var(--accent); border-bottom-color:var(--accent); }
+    .page { display:none; padding:16px; }
+    .page.active { display:block; }
+    .section { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:12px; box-shadow:0 2px 8px rgba(0,0,0,0.25); }
+    .section-title { font-family:'Bebas Neue',sans-serif; font-size:0.9rem; letter-spacing:0.12em; color:var(--muted); margin-bottom:12px; text-transform:uppercase; }
+    .field { margin-bottom:12px; }
+    .field:last-child { margin-bottom:0; }
+    .field label { display:block; font-size:0.62rem; color:var(--muted); letter-spacing:0.12em; text-transform:uppercase; margin-bottom:6px; }
+    .field input { width:100%; background:var(--cell); border:1px solid var(--border); border-radius:8px; color:var(--text); font-family:'DM Mono',monospace; font-size:1rem; padding:12px 14px; outline:none; transition:border-color 0.2s; -webkit-appearance:none; }
+    .field input:focus { border-color:var(--accent2); }
+    .remove-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:8px; }
+    .remove-btn { background:var(--cell); border:2px solid var(--border); border-radius:8px; color:var(--muted); font-family:'DM Mono',monospace; font-size:1rem; padding:14px 4px; cursor:pointer; transition:all 0.15s; text-align:center; }
+    .remove-btn.active { background:var(--accent); border-color:var(--accent); color:#0b1a24; font-weight:600; }
+    .btn { width:100%; padding:16px; border-radius:10px; border:none; font-family:'Bebas Neue',sans-serif; font-size:1.1rem; letter-spacing:0.1em; cursor:pointer; transition:all 0.15s; }
+    .btn+.btn { margin-top:8px; }
+    .btn-primary { background:var(--accent); color:#0b1a24; }
+    .btn-primary:active { filter:brightness(0.9); }
+    .btn-danger { background:transparent; border:2px solid var(--accent2); color:var(--accent2); }
+    .btn-danger:active { background:var(--accent2); color:#fff; }
+    .btn-secondary { background:transparent; border:2px solid var(--border); color:var(--muted); }
+    .btn-secondary:active { border-color:var(--accent); color:var(--accent); }
+    .stats-row { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:12px; }
+    .stat-box { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:12px 6px; text-align:center; box-shadow:0 2px 6px rgba(0,0,0,0.25); }
+    .stat-box-num { font-family:'Bebas Neue',sans-serif; font-size:1.6rem; letter-spacing:0.05em; color:var(--accent); line-height:1; }
+    .stat-box-label { font-size:0.55rem; letter-spacing:0.12em; text-transform:uppercase; color:var(--muted); margin-top:3px; }
+    #board { display:grid; gap:4px; }
+    .cell { aspect-ratio:1; background:var(--cell); border:1px solid var(--border); border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:clamp(0.45rem,2.5vw,0.8rem); font-weight:500; color:var(--text); cursor:pointer; user-select:none; position:relative; -webkit-tap-highlight-color:transparent; transition:background 0.1s,border-color 0.1s; }
+    .cell.selected { background:var(--cell-selected); border-color:var(--accent2); color:var(--accent2); }
+    .cell.removed { background:var(--removed); border-color:var(--border); color:rgba(255,255,255,0.22); cursor:default; pointer-events:none; text-decoration:line-through; }
+    .board-hint { font-size:0.62rem; color:var(--muted); letter-spacing:0.1em; text-transform:uppercase; text-align:center; margin-bottom:10px; }
+    .board-actions { position:sticky; bottom:0; background:rgba(16,19,26,0.95); backdrop-filter:blur(6px); border-top:2px solid var(--border); padding:12px 16px; display:flex; gap:8px; z-index:40; }
+    .board-actions .btn { margin:0; padding:14px 8px; font-size:0.85rem; }
+    #toast { position:fixed; bottom:80px; left:50%; transform:translateX(-50%) translateY(60px); background:var(--accent); color:#0b1a24; font-family:'DM Mono',monospace; font-size:0.72rem; font-weight:600; letter-spacing:0.1em; padding:9px 20px; border-radius:999px; pointer-events:none; opacity:0; white-space:nowrap; transition:transform 0.3s cubic-bezier(0.34,1.56,0.64,1),opacity 0.3s; z-index:999; }
+    .key-note { font-size:0.68rem; color:var(--muted); margin-top:10px; line-height:1.5; }
+    #toast.show { transform:translateX(-50%) translateY(0); opacity:1; }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>Control Panel</h1>
+  <span class="badge" id="syncBadge">Connecting…</span>
+</div>
+
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('setup')">Setup</div>
+  <div class="tab" onclick="switchTab('board')">Board</div>
+  <div class="tab" onclick="switchTab('actions')">Actions</div>
+</div>
+
+<div class="page active" id="page-setup">
+  <div class="section">
+    <div class="section-title">Connection</div>
+    <div id="keyEntry">
+      <div class="field">
+        <label>Ably key (publish)</label>
+        <input type="password" id="keyInput" placeholder="appId.keyId:secret" autocomplete="off" spellcheck="false"/>
+      </div>
+      <button class="btn btn-primary" onclick="saveKey()">Save &amp; Connect</button>
+      <p class="key-note">Saved in this browser only. It is never stored in the page itself.</p>
+    </div>
+    <div id="keySaved" style="display:none;">
+      <p class="key-note" style="margin-top:0">A key is saved on this device.</p>
+      <button class="btn btn-secondary" onclick="forgetKey()">Forget Key</button>
+    </div>
+  </div>
+  <div class="section">
+    <div class="section-title">Event</div>
+    <div class="field">
+      <label>Title</label>
+      <input type="text" id="titleInput" value="Number Draw" placeholder="e.g. Spring Raffle"/>
+    </div>
+  </div>
+  <div class="section">
+    <div class="section-title">Board</div>
+    <div class="field">
+      <label>Total Numbers</label>
+      <input type="number" id="totalInput" value="400" min="1" max="500" inputmode="numeric"/>
+    </div>
+    <div class="field">
+      <label>Starting Number</label>
+      <input type="number" id="startInput" value="1" inputmode="numeric"/>
+    </div>
+    <button class="btn btn-secondary" onclick="buildBoard()">Rebuild Board</button>
+  </div>
+  <div class="section">
+    <div class="section-title">Remove Count</div>
+    <div class="remove-grid">
+      <button class="remove-btn" data-val="1"  onclick="selectRemove(this)">1</button>
+      <button class="remove-btn active" data-val="5"  onclick="selectRemove(this)">5</button>
+      <button class="remove-btn" data-val="10" onclick="selectRemove(this)">10</button>
+      <button class="remove-btn" data-val="15" onclick="selectRemove(this)">15</button>
+      <button class="remove-btn" data-val="25" onclick="selectRemove(this)">25</button>
+    </div>
+  </div>
+</div>
+
+<div class="page" id="page-board">
+  <div class="board-hint">Tap numbers to select them</div>
+  <div id="board"></div>
+</div>
+<div class="board-actions" id="boardActions" style="display:none;">
+  <button class="btn btn-primary" style="flex:2" onclick="removeSelected()">Remove Selected</button>
+  <button class="btn btn-secondary" style="flex:1" onclick="clearSelection()">Clear</button>
+</div>
+
+<div class="page" id="page-actions">
+  <div class="stats-row">
+    <div class="stat-box"><div class="stat-box-num" id="statTotal">—</div><div class="stat-box-label">Total</div></div>
+    <div class="stat-box"><div class="stat-box-num" id="statActive">—</div><div class="stat-box-label">Active</div></div>
+    <div class="stat-box"><div class="stat-box-num" id="statRemoved">—</div><div class="stat-box-label">Called</div></div>
+    <div class="stat-box"><div class="stat-box-num" id="statSelected">0</div><div class="stat-box-label">Selected</div></div>
+  </div>
+  <div class="section">
+    <div class="section-title">Quick Actions</div>
+    <button class="btn btn-primary" onclick="removeSelected()">Remove Selected Numbers</button>
+    <button class="btn btn-danger"  onclick="removeRandom()">Remove Random</button>
+    <button class="btn btn-secondary" onclick="restoreAll()">Restore All Numbers</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+  /* ── Settings ────────────────────────────────────────────
+     Keys are NOT stored in this file. The publish key is typed
+     in on the Setup tab and saved in this browser only.
+     CHANNEL must match the display (default numberboard-v1).
+  ─────────────────────────────────────────────────────── */
+  const KEY_STORE = 'numberboard-control-key';
+  const CHANNEL   = new URLSearchParams(location.search).get('channel') || 'numberboard-v1';
+
+  let removeCount   = 5;
+  let selectedCells = new Set();
+  let ablyReady     = false;
+  let publishQueue  = [];
+
+  // lastCalledLog keeps the running history of numbers removed IN ORDER
+  // so the display always shows the most recent ones correctly
+  let lastCalledLog = [];
+
+  let channel = null;
+  let ably    = null;
+
+  function safeGet(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
+  function safeSet(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
+  function safeDel(k){ try { localStorage.removeItem(k); } catch(e){} }
+  function looksLikeKey(k){ return /^[^.\s]+\.[^:\s]+:\S+$/.test(k || ''); }
+
+  function showKeyState(saved) {
+    document.getElementById('keyEntry').style.display = saved ? 'none' : '';
+    document.getElementById('keySaved').style.display = saved ? '' : 'none';
+  }
+
+  function connect(key) {
+    if (ably) { try { ably.close(); } catch(e){} }
+    setBadge('connecting');
+    ably = new Ably.Realtime({ key });
+    channel = ably.channels.get(CHANNEL + ':state', { params: { rewind: '1' } });
+    ably.connection.on('connected', () => {
+      setBadge('live'); ablyReady = true;
+      publishQueue.forEach(st => channel.publish('state', st));
+      publishQueue = [];
+    });
+    ably.connection.on('disconnected', () => { setBadge('error'); ablyReady = false; });
+    ably.connection.on('failed', () => {
+      setBadge('error'); ablyReady = false;
+      safeDel(KEY_STORE); showKeyState(false);
+      showToast('Key rejected. Check it and try again');
+    });
+  }
+
+  function saveKey() {
+    const key = document.getElementById('keyInput').value.trim();
+    if (!looksLikeKey(key)) { showToast('That doesn\u2019t look like an Ably key'); return; }
+    safeSet(KEY_STORE, key);
+    document.getElementById('keyInput').value = '';
+    showKeyState(true);
+    connect(key);
+    publishQueue = [getState()];
+  }
+
+  function forgetKey() {
+    safeDel(KEY_STORE);
+    if (ably) { try { ably.close(); } catch(e){} ably = null; }
+    channel = null; ablyReady = false;
+    setBadge('error');
+    showKeyState(false);
+    showToast('Key removed from this device');
+  }
+
+  function setBadge(st) {
+    const b = document.getElementById('syncBadge');
+    b.className = 'badge ' + st;
+    b.textContent = st === 'live' ? 'Live' : st === 'error' ? 'Offline' : 'Connecting…';
+  }
+
+  function getState() {
+    const cells = [...document.querySelectorAll('.cell')];
+    return {
+      title:          document.getElementById('titleInput').value || 'Number Draw',
+      total:          cells.length,
+      start:          cells.length ? parseInt(cells[0].dataset.num) : 1,
+      // removed is the SET of indices (for board rendering)
+      removed:        cells.filter(c => c.classList.contains('removed')).map(c => c.dataset.idx),
+      // lastCalledLog is the full ordered history — display reads last N
+      lastCalledLog:  lastCalledLog,
+    };
+  }
+
+  function pushState() {
+    const state = getState();
+    if (ablyReady && channel) {
+      channel.publish('state', state);
+    } else {
+      publishQueue = [state];
+    }
+  }
+
+  function switchTab(name) {
+    document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', ['setup','board','actions'][i] === name));
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.getElementById('page-' + name).classList.add('active');
+    document.getElementById('boardActions').style.display = (name === 'board') ? 'flex' : 'none';
+  }
+
+  function selectRemove(btn) {
+    document.querySelectorAll('.remove-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    removeCount = parseInt(btn.dataset.val);
+  }
+
+  function buildBoard() {
+    const total = Math.max(1, Math.min(500, parseInt(document.getElementById('totalInput').value) || 400));
+    const start = parseInt(document.getElementById('startInput').value) || 1;
+    document.getElementById('totalInput').value = total;
+    selectedCells.clear();
+    lastCalledLog = []; // reset history on rebuild
+
+    const board = document.getElementById('board');
+    board.innerHTML = '';
+    const cols = Math.ceil(Math.sqrt(total * 1.4));
+    board.style.gridTemplateColumns = 'repeat(' + cols + ', minmax(0,1fr))';
+
+    for (let i = 0; i < total; i++) {
+      const num  = start + i;
+      const cell = document.createElement('div');
+      cell.className   = 'cell';
+      cell.textContent = num;
+      cell.dataset.num = num;
+      cell.dataset.idx = i;
+      cell.addEventListener('click', () => toggleSelect(cell));
+      board.appendChild(cell);
+    }
+
+    updateStats();
+    pushState();
+    showToast('Board built — ' + total + ' numbers');
+  }
+
+  function toggleSelect(cell) {
+    if (cell.classList.contains('removed')) return;
+    const idx = cell.dataset.idx;
+    if (selectedCells.has(idx)) { selectedCells.delete(idx); cell.classList.remove('selected'); }
+    else                        { selectedCells.add(idx);    cell.classList.add('selected'); }
+    updateStats();
+  }
+
+  function clearSelection() {
+    document.querySelectorAll('.cell.selected').forEach(c => c.classList.remove('selected'));
+    selectedCells.clear();
+    updateStats();
+  }
+
+  function removeSelected() {
+    const sel = [...document.querySelectorAll('.cell.selected')];
+    if (!sel.length) { showToast('No cells selected'); return; }
+    const toRemove = sel.slice(0, removeCount);
+    toRemove.forEach(c => doRemove(c));
+    showToast('Removed ' + toRemove.length + (sel.length > removeCount ? ' — limit reached' : ''));
+    updateStats();
+    pushState();
+  }
+
+  function removeRandom() {
+    const active = [...document.querySelectorAll('.cell:not(.removed):not(.selected)')];
+    if (!active.length) { showToast('No active cells left'); return; }
+    const pick = shuffle(active).slice(0, removeCount);
+    pick.forEach(c => doRemove(c));
+    showToast('Randomly removed ' + pick.length);
+    updateStats();
+    pushState();
+  }
+
+  function doRemove(cell) {
+    cell.classList.remove('selected');
+    selectedCells.delete(cell.dataset.idx);
+    cell.classList.add('removed');
+    // Push this number onto the ordered call log
+    lastCalledLog.push(parseInt(cell.dataset.num));
+  }
+
+  function restoreAll() {
+    document.querySelectorAll('.cell').forEach(c => c.classList.remove('removed','selected'));
+    selectedCells.clear();
+    lastCalledLog = []; // clear history on reset
+    showToast('Board restored');
+    updateStats();
+    pushState();
+  }
+
+  function updateStats() {
+    const total   = document.querySelectorAll('.cell').length;
+    const removed = document.querySelectorAll('.cell.removed').length;
+    document.getElementById('statTotal').textContent    = total;
+    document.getElementById('statActive').textContent   = total - removed;
+    document.getElementById('statRemoved').textContent  = removed;
+    document.getElementById('statSelected').textContent = selectedCells.size;
+  }
+
+  function shuffle(arr) {
+    const a = [...arr];
+    for (let i = a.length-1; i>0; i--) { const j = Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; }
+    return a;
+  }
+
+  let toastTimer;
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+  }
+
+  document.getElementById('titleInput').addEventListener('input', () => pushState());
+
+  buildBoard();
+
+  (function start() {
+    const key = safeGet(KEY_STORE);
+    if (looksLikeKey(key)) { showKeyState(true); connect(key); }
+    else { showKeyState(false); setBadge('error'); showToast('Enter your Ably key on the Setup tab'); }
+  })();
+</script>
+</body>
+</html>
